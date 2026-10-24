@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+*.log
+.DS_Store
+venv/
+env/
+*.mp4
+*.avi
+*.mov
+tmp/
+.cache/

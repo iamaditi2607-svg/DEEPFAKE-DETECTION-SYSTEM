@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeepShield – Deepfake Detection System</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #020d07;
+      --surface:   #061a0f;
+      --card:      #0a2414;
+      --green:     #00ff88;
+      --green-dim: #00c866;
+      --red:       #ff3366;
+      --red-dim:   #cc2255;
+      --text:      #d4f5e2;
+      --muted:     #5a8a6a;
+      --border:    #0f4a25;
+      --radius:    14px;
+      --shadow:    0 4px 24px rgba(0,255,136,0.08);
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    #matrix-canvas {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 0; opacity: 0.18;
+      pointer-events: none;
+    }
+
+    .wrapper {
+      position: relative; z-index: 1;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 16px 60px;
+    }
+
+    /* ── Header ── */
+    header {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(2,13,7,0.94);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex; align-items: center;
+      justify-content: space-between; flex-wrap: wrap; gap: 10px;
+    }
+
+    .logo {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 1.35rem; font-weight: 800; color: var(--green);
+    }
+
+    .logo-icon {
+      width: 38px; height: 38px;
+      background: linear-gradient(135deg, #ff6600, #cc4400);
+      border-radius: 8px; display: grid; place-items: center;
+      font-size: 1.3rem; font-weight: 900; color: #fff;
+      border: 2px solid #fff2;
+    }
+
+    .badge {
+      font-size: 0.68rem; background: var(--green); color: #000;
+      padding: 2px 8px; border-radius: 20px; font-weight: 700; letter-spacing: 1px;
+    }
+
+    /* API status indicator */
+    .api-status {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 0.78rem; color: var(--muted); font-weight: 600;
+    }
+
+    .api-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--muted); transition: background .4s;
+    }
+
+    .api-dot.online  { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .api-dot.offline { background: var(--red);   box-shadow: 0 0 8px var(--red);   }
+
+    nav { display: flex; gap: 18px; align-items: center; }
+    nav a { color: var(--muted); text-decoration: none; font-size: 0.86rem; font-weight: 600; transition: color .2s; }
+    nav a:hover { color: var(--green); }
+
+    /* ── Hero ── */
+    .hero { text-align: center; padding: 64px 16px 40px; }
+
+    .hero-tag {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(0,255,136,0.08);
+      border: 1px solid rgba(0,255,136,0.25);
+      color: var(--green); border-radius: 20px; padding: 5px 14px;
+      font-size: 0.82rem; font-weight: 700; letter-spacing: 0.8px; margin-bottom: 22px;
+    }
+
+    .hero h1 { font-size: clamp(2rem, 6vw, 3.4rem); font-weight: 900; line-height: 1.15; color: #fff; margin-bottom: 18px; }
+    .hero h1 span { color: var(--green); }
+    .hero p { max-width: 640px; margin: 0 auto 32px; color: var(--muted); font-size: clamp(0.95rem, 2.5vw, 1.1rem); line-height: 1.7; }
+
+    /* ── Problem Cards ── */
+    .section-label { font-size: 0.74rem; letter-spacing: 2px; text-transform: uppercase; color: var(--green); font-weight: 700; margin-bottom: 8px; }
+    .section-title  { font-size: clamp(1.4rem, 4vw, 2rem); font-weight: 800; color: #fff; margin-bottom: 6px; }
+    .section-sub    { color: var(--muted); font-size: 0.95rem; margin-bottom: 32px; }
+
+    .problems-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 48px; }
+
+    .problem-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px 20px;
+      transition: transform .2s, border-color .2s, box-shadow .2s;
+    }
+    .problem-card:hover { transform: translateY(-4px); border-color: var(--red-dim); box-shadow: 0 8px 32px rgba(255,51,102,0.15); }
+    .problem-card h3 { color: var(--red); font-size: 1.05rem; font-weight: 700; margin-bottom: 8px; }
+    .problem-card p  { color: var(--muted); font-size: 0.9rem; line-height: 1.6; }
+
+    /* ── Upload ── */
+    .upload-section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 20px; padding: 40px 32px; margin-bottom: 48px; box-shadow: var(--shadow);
+    }
+
+    .upload-zone {
+      border: 2px dashed var(--border); border-radius: var(--radius);
+      padding: 52px 20px; text-align: center; cursor: pointer;
+      transition: all .25s; background: rgba(0,255,136,0.02);
+      position: relative; overflow: hidden;
+    }
+    .upload-zone:hover, .upload-zone.drag-over { border-color: var(--green); background: rgba(0,255,136,0.06); }
+    .upload-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+
+    .upload-icon { font-size: 3.5rem; margin-bottom: 14px; }
+    .upload-zone h3 { font-size: 1.15rem; color: #fff; margin-bottom: 6px; }
+    .upload-zone p  { color: var(--muted); font-size: 0.88rem; }
+
+    .upload-zone .formats { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .format-tag { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; font-size: 0.75rem; color: var(--green); font-weight: 600; }
+
+    /* Preview */
+    #preview-area { display: none; margin-top: 16px; text-align: center; }
+    #preview-img  { max-height: 200px; max-width: 100%; border-radius: var(--radius); border: 1px solid var(--border); object-fit: contain; }
+    #preview-vid  { max-height: 200px; max-width: 100%; border-radius: var(--radius); border: 1px solid var(--border); display: none; }
+
+    #file-info {
+      display: none; align-items: center; gap: 12px;
+      background: rgba(0,255,136,0.06); border: 1px solid rgba(0,255,136,0.2);
+      border-radius: var(--radius); padding: 14px 20px; margin-top: 16px;
+    }
+    #file-info .file-icon  { font-size: 2rem; }
+    #file-info .file-name  { font-weight: 700; color: #fff; font-size: 0.95rem; }
+    #file-info .file-size  { color: var(--muted); font-size: 0.82rem; }
+    #file-info .file-extra { flex: 1; }
+
+    .btn-remove { background: none; border: 1px solid var(--red-dim); color: var(--red); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 0.8rem; font-weight: 600; transition: all .2s; }
+    .btn-remove:hover { background: rgba(255,51,102,0.1); }
+
+    .analyze-btn {
+      width: 100%; padding: 17px; margin-top: 22px;
+      background: linear-gradient(135deg, #00ff88, #00cc66);
+      color: #000; font-size: 1.05rem; font-weight: 800; border: none;
+      border-radius: var(--radius); cursor: pointer; transition: all .25s;
+      letter-spacing: 0.5px; display: flex; align-items: center; justify-content: center; gap: 10px;
+    }
+    .analyze-btn:hover:not(:disabled) { background: linear-gradient(135deg, #33ff99, #00ee77); box-shadow: 0 0 24px rgba(0,255,136,0.4); transform: translateY(-1px); }
+    .analyze-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Error Toast ── */
+    #error-toast {
+      display: none; align-items: center; gap: 12px;
+      background: rgba(255,51,102,0.1); border: 1px solid var(--red-dim);
+      border-radius: var(--radius); padding: 14px 18px; margin-top: 16px;
+      color: var(--red); font-size: 0.9rem;
+    }
+
+    /* ── Pipeline ── */
+    #pipeline-section { display: none; margin-bottom: 48px; }
+
+    .pipeline-steps { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding: 8px 4px 16px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+    .step-item { display: flex; align-items: center; flex-shrink: 0; }
+
+    .step-box {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px 16px; text-align: center;
+      width: 130px; transition: all .4s; position: relative;
+    }
+    .step-box.active      { border-color: var(--green); box-shadow: 0 0 20px rgba(0,255,136,0.2); background: rgba(0,255,136,0.06); }
+    .step-box.done        { border-color: var(--green-dim); background: rgba(0,255,136,0.04); }
+    .step-box.result-step.active { border-color: var(--red); box-shadow: 0 0 20px rgba(255,51,102,0.25); background: rgba(255,51,102,0.06); }
+
+    .step-num {
+      width: 34px; height: 34px; border-radius: 50%;
+      background: var(--border); display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 0.95rem; color: var(--muted);
+      margin: 0 auto 10px; transition: all .4s;
+    }
+    .step-box.active .step-num { background: var(--green); color: #000; }
+    .step-box.done   .step-num { background: var(--green-dim); color: #000; }
+    .step-box.result-step.active .step-num { background: var(--red); color: #fff; }
+
+    .step-title { font-weight: 700; font-size: 0.82rem; color: #fff; margin-bottom: 4px; }
+    .step-desc  { font-size: 0.72rem; color: var(--muted); line-height: 1.4; }
+
+    .step-connector { flex: 0 0 28px; height: 2px; background: var(--border); transition: background .4s; margin-top: -10px; }
+    .step-connector.active { background: var(--green); }
+
+    /* ── Progress ── */
+    .progress-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 20px 24px; margin-top: 20px; }
+    .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .progress-label { font-size: 0.9rem; font-weight: 600; color: var(--text); }
+    .progress-pct   { font-size: 0.85rem; color: var(--green); font-weight: 700; }
+    .progress-bar-bg { background: var(--border); border-radius: 20px; height: 8px; overflow: hidden; }
+    .progress-bar-fill { height: 100%; background: linear-gradient(90deg, #00ff88, #00cc66); border-radius: 20px; transition: width 0.5s ease; width: 0%; box-shadow: 0 0 10px rgba(0,255,136,0.5); }
+    .progress-status { font-size: 0.8rem; color: var(--muted); margin-top: 8px; }
+
+    /* ── Result ── */
+    #result-section { display: none; margin-bottom: 48px; }
+
+    .result-card {
+      border-radius: 20px; padding: 40px 32px;
+      text-align: center; border: 2px solid; position: relative; overflow: hidden;
+    }
+    .result-card::before { content: ''; position: absolute; inset: 0; opacity: 0.06; background: radial-gradient(circle at center, currentColor 0%, transparent 70%); }
+    .result-card.real { background: rgba(0,255,136,0.05); border-color: var(--green); color: var(--green); animation: glowGreen 2s infinite; }
+    .result-card.fake { background: rgba(255,51,102,0.05); border-color: var(--red);   color: var(--red);   animation: glowRed   2s infinite; }
+
+    @keyframes glowGreen { 0%,100% { box-shadow: 0 0 20px rgba(0,255,136,0.2); } 50% { box-shadow: 0 0 40px rgba(0,255,136,0.4); } }
+    @keyframes glowRed   { 0%,100% { box-shadow: 0 0 20px rgba(255,51,102,0.2); } 50% { box-shadow: 0 0 40px rgba(255,51,102,0.4); } }
+
+    .result-icon    { font-size: 4.5rem; margin-bottom: 16px; }
+    .result-verdict { font-size: clamp(2rem, 8vw, 3.5rem); font-weight: 900; letter-spacing: 3px; margin-bottom: 10px; }
+    .result-card.real .result-verdict { color: var(--green); }
+    .result-card.fake .result-verdict { color: var(--red); }
+    .result-sub { color: var(--muted); font-size: 0.95rem; margin-bottom: 28px; }
+
+    .confidence-row { display: flex; justify-content: center; gap: 32px; flex-wrap: wrap; }
+    .conf-item { text-align: center; }
+    .conf-val   { font-size: 2rem; font-weight: 800; line-height: 1; }
+    .conf-label { font-size: 0.78rem; color: var(--muted); margin-top: 4px; letter-spacing: 1px; text-transform: uppercase; }
+
+    /* Frame chart */
+    .frames-analysis { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-top: 24px; }
+    .frames-title    { font-weight: 700; color: #fff; margin-bottom: 16px; font-size: 0.95rem; }
+    .frame-bars      { display: flex; align-items: flex-end; gap: 5px; height: 90px; justify-content: center; }
+
+    .frame-bar { flex: 1; max-width: 36px; border-radius: 4px 4px 0 0; transition: height .5s; cursor: default; position: relative; min-height: 4px; }
+    .frame-bar:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #111; border: 1px solid var(--border); color: #fff; font-size: 0.7rem; padding: 3px 7px; border-radius: 6px; white-space: nowrap; pointer-events: none; z-index: 10; }
+
+    /* ── How It Works ── */
+    .howit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 48px; }
+    .howit-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 18px; transition: transform .2s, border-color .2s; }
+    .howit-card:hover { transform: translateY(-4px); border-color: var(--green); }
+    .howit-num { width: 36px; height: 36px; background: var(--green); border-radius: 50%; display: grid; place-items: center; font-weight: 800; color: #000; font-size: 1rem; margin-bottom: 12px; }
+    .howit-card h4 { color: var(--green); font-size: 0.95rem; font-weight: 700; margin-bottom: 6px; }
+    .howit-card p  { color: var(--muted); font-size: 0.85rem; line-height: 1.6; }
+
+    /* ── Stats ── */
+    .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 48px; }
+    .stat-card  { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px 16px; text-align: center; transition: border-color .2s; }
+    .stat-card:hover { border-color: var(--green); }
+    .stat-val   { font-size: 2.2rem; font-weight: 900; color: var(--green); line-height: 1; margin-bottom: 6px; }
+    .stat-label { color: var(--muted); font-size: 0.82rem; font-weight: 600; }
+
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; color: var(--muted); font-size: 0.83rem; }
+    footer strong { color: var(--green); }
+
+    @keyframes fadeInUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-in { animation: fadeInUp .5s ease forwards; }
+
+    .spinner { width: 20px; height: 20px; border: 3px solid rgba(0,0,0,0.2); border-top-color: #000; border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 600px) {
+      header { padding: 12px 16px; }
+      .upload-section { padding: 24px 16px; }
+      .upload-zone { padding: 36px 12px; }
+      .result-card { padding: 28px 18px; }
+      .confidence-row { gap: 18px; }
+      nav a:nth-child(3) { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="matrix-canvas"></canvas>
+
+<!-- ── Header ── -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">H</div>
+    DeepShield <span class="badge">AI</span>
+  </div>
+  <div class="api-status">
+    <div class="api-dot" id="api-dot"></div>
+    <span id="api-status-text">Connecting…</span>
+  </div>
+  <nav>
+    <a href="#detect">Detect</a>
+    <a href="#how-it-works">How It Works</a>
+    <a href="#about">About</a>
+  </nav>
+</header>
+
+<div class="wrapper">
+
+  <!-- ── Hero ── -->
+  <section class="hero">
+    <div class="hero-tag">🛡️ AI-POWERED DEEPFAKE DETECTION</div>
+    <h1>Is This <span>Real or Fake?</span></h1>
+    <p>Upload any <strong>photo or video</strong> — our CNN (MobileNetV2/ViT) analyzes faces and tells you if it's <strong>REAL</strong> or a <strong>DEEPFAKE</strong> in seconds.</p>
+  </section>
+
+  <!-- ── Problem Cards ── -->
+  <div style="margin-bottom:48px">
+    <div class="section-label">WHY IT MATTERS</div>
+    <div class="section-title">The Deepfake Threat</div>
+    <p class="section-sub">Deepfakes are AI-made fake videos/images that look completely real.</p>
+    <div class="problems-grid">
+      <div class="problem-card"><h3>📰 Fake News</h3><p>Fake videos spread false information, manipulate public opinion and destroy trust.</p></div>
+      <div class="problem-card"><h3>💸 Scams & Fraud</h3><p>Fake video calls cheat people by impersonating trusted individuals and institutions.</p></div>
+      <div class="problem-card"><h3>⚠️ Identity Misuse</h3><p>Faces misused to harm reputation, blackmail victims or defame public figures.</p></div>
+    </div>
+  </div>
+
+  <!-- ── Upload ── -->
+  <section id="detect" style="margin-bottom:48px">
+    <div class="section-label">STEP 1 — UPLOAD</div>
+    <div class="section-title">Analyze Your File</div>
+    <p class="section-sub">Upload an <strong>image</strong> (JPG, PNG, WEBP) or <strong>video</strong> (MP4, MOV, AVI) for deepfake analysis.</p>
+
+    <div class="upload-section">
+      <div class="upload-zone" id="drop-zone">
+        <input type="file" id="file-input" accept="image/*,video/*" />
+        <div class="upload-icon">🔍</div>
+        <h3>Drag & Drop image or video here</h3>
+        <p>or click anywhere to browse files</p>
+        <div class="formats">
+          <span class="format-tag">JPG</span>
+          <span class="format-tag">PNG</span>
+          <span class="format-tag">WEBP</span>
+          <span class="format-tag">MP4</span>
+          <span class="format-tag">MOV</span>
+          <span class="format-tag">AVI</span>
+        </div>
+      </div>
+
+      <!-- Preview -->
+      <div id="preview-area">
+        <img id="preview-img" alt="Preview" />
+        <video id="preview-vid" controls muted></video>
+      </div>
+
+      <!-- File Info -->
+      <div id="file-info">
+        <div class="file-icon" id="file-emoji">📄</div>
+        <div class="file-extra">
+          <div class="file-name" id="fname">—</div>
+          <div class="file-size" id="fsize">—</div>
+        </div>
+        <button class="btn-remove" onclick="removeFile()">✕ Remove</button>
+      </div>
+
+      <!-- Error -->
+      <div id="error-toast">
+        <span>⚠️</span>
+        <span id="error-msg">Something went wrong.</span>
+      </div>
+
+      <button class="analyze-btn" id="analyze-btn" onclick="startAnalysis()" disabled>
+        🔍 Analyze for Deepfake
+      </button>
+    </div>
+  </section>
+
+  <!-- ── Pipeline ── -->
+  <section id="pipeline-section">
+    <div class="section-label">PROCESSING</div>
+    <div class="section-title">Analysis Pipeline</div>
+    <p class="section-sub">AI model is scanning and detecting manipulation artifacts…</p>
+
+    <div class="pipeline-steps" id="pipeline-steps">
+      <div class="step-item">
+        <div class="step-box" id="step-0">
+          <div class="step-num">1</div>
+          <div class="step-title">Upload</div>
+          <div class="step-desc">Reading file</div>
+        </div>
+      </div>
+      <div class="step-connector" id="conn-0"></div>
+      <div class="step-item">
+        <div class="step-box" id="step-1">
+          <div class="step-num">2</div>
+          <div class="step-title">Frames</div>
+          <div class="step-desc">Extracting frames</div>
+        </div>
+      </div>
+      <div class="step-connector" id="conn-1"></div>
+      <div class="step-item">
+        <div class="step-box" id="step-2">
+          <div class="step-num">3</div>
+          <div class="step-title">Face Crop</div>
+          <div class="step-desc">Detecting faces</div>
+        </div>
+      </div>
+      <div class="step-connector" id="conn-2"></div>
+      <div class="step-item">
+        <div class="step-box" id="step-3">
+          <div class="step-num">4</div>
+          <div class="step-title">CNN</div>
+          <div class="step-desc">AI scoring</div>
+        </div>
+      </div>
+      <div class="step-connector" id="conn-3"></div>
+      <div class="step-item">
+        <div class="step-box" id="step-4">
+          <div class="step-num">5</div>
+          <div class="step-title">Average</div>
+          <div class="step-desc">Combining scores</div>
+        </div>
+      </div>
+      <div class="step-connector" id="conn-4"></div>
+      <div class="step-item">
+        <div class="step-box result-step" id="step-5">
+          <div class="step-num">6</div>
+          <div class="step-title">Result</div>
+          <div class="step-desc">REAL or FAKE</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="progress-wrap">
+      <div class="progress-header">
+        <span class="progress-label" id="progress-label">Initializing…</span>
+        <span class="progress-pct" id="progress-pct">0%</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="progress-bar"></div>
+      </div>
+      <div class="progress-status" id="progress-status">Sending to AI model…</div>
+    </div>
+  </section>
+
+  <!-- ── Result ── -->
+  <section id="result-section">
+    <div class="section-label">ANALYSIS COMPLETE</div>
+    <div class="section-title">Detection Result</div>
+    <p class="section-sub" style="margin-bottom:24px">Here's what our AI found:</p>
+
+    <div class="result-card" id="result-card">
+      <div class="result-icon"    id="result-icon"></div>
+      <div class="result-verdict" id="result-verdict"></div>
+      <div class="result-sub"     id="result-sub"></div>
+      <div class="confidence-row">
+        <div class="conf-item">
+          <div class="conf-val" id="conf-fake-val">—</div>
+          <div class="conf-label">Fake Score</div>
+        </div>
+        <div class="conf-item">
+          <div class="conf-val" id="conf-real-val">—</div>
+          <div class="conf-label">Real Score</div>
+        </div>
+        <div class="conf-item">
+          <div class="conf-val" id="conf-frames-val">—</div>
+          <div class="conf-label">Frames Checked</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="frames-analysis" id="frames-analysis">
+      <div class="frames-title">📊 Per-Frame Fake Probability</div>
+      <div class="frame-bars" id="frame-bars"></div>
+      <div style="display:flex;justify-content:space-between;margin-top:6px">
+        <span style="font-size:0.72rem;color:var(--muted)">Frame 1</span>
+        <span style="font-size:0.72rem;color:var(--muted)" id="last-frame-label">Frame 20</span>
+      </div>
+    </div>
+
+    <button class="analyze-btn" onclick="resetAll()" style="margin-top:20px;background:linear-gradient(135deg,#1a3a28,#0d2018);color:var(--green);border:1px solid var(--green)">
+      🔄 Analyze Another File
+    </button>
+  </section>
+
+  <!-- ── How It Works ── -->
+  <section id="how-it-works" style="margin-bottom:48px">
+    <div class="section-label">TECHNOLOGY</div>
+    <div class="section-title">How It Works</div>
+    <p class="section-sub">6-step AI pipeline powered by ViT / MobileNetV2 (HuggingFace)</p>
+    <div class="howit-grid">
+      <div class="howit-card"><div class="howit-num">1</div><h4>Upload File</h4><p>User uploads image or video.</p></div>
+      <div class="howit-card"><div class="howit-num">2</div><h4>Extract Frames</h4><p>Key frames sampled from video timeline.</p></div>
+      <div class="howit-card"><div class="howit-num">3</div><h4>Face Detection</h4><p>Faces detected and cropped from each frame.</p></div>
+      <div class="howit-card"><div class="howit-num">4</div><h4>AI Scoring</h4><p>Vision Transformer model scores each crop.</p></div>
+      <div class="howit-card"><div class="howit-num">5</div><h4>Score Average</h4><p>All frame scores combined into one confidence score.</p></div>
+      <div class="howit-card"><div class="howit-num">6</div><h4>Final Result</h4><p>System outputs REAL or FAKE with confidence %.</p></div>
+    </div>
+  </section>
+
+  <!-- ── Stats ── -->
+  <section id="about" style="margin-bottom:48px">
+    <div class="section-label">PERFORMANCE</div>
+    <div class="section-title">System Statistics</div>
+    <p class="section-sub">Trained on FaceForensics++ &amp; DeepFake Detection Challenge datasets.</p>
+    <div class="stats-row">
+      <div class="stat-card"><div class="stat-val">94%</div><div class="stat-label">Detection Accuracy</div></div>
+      <div class="stat-card"><div class="stat-val">20+</div><div class="stat-label">Frames Per Video</div></div>
+      <div class="stat-card"><div class="stat-val">&lt;10s</div><div class="stat-label">Processing Time</div></div>
+      <div class="stat-card"><div class="stat-val">ViT</div><div class="stat-label">AI Architecture</div></div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <strong>DeepShield</strong> · Deepfake Detection System &nbsp;|&nbsp;
+  Team <strong>Idea Ignitors</strong> &nbsp;|&nbsp; AITM College, Kanpur<br><br>
+  <span style="font-size:.75rem">Fake News · Scams & Fraud · Identity Misuse → Solution: AI detects REAL or FAKE</span>
+</footer>
+
+<script>
+/* ──────────────────────────────────────────
+   CONFIG — set API base URL here
+   On Railway: this will be set automatically via window.API_BASE
+────────────────────────────────────────── */
+const API_BASE = window.API_BASE || '';   // empty = same origin (works on Railway)
+
+/* ──────────────────────────────────────────
+   Matrix Rain
+────────────────────────────────────────── */
+(function () {
+  const canvas = document.getElementById('matrix-canvas');
+  const ctx = canvas.getContext('2d');
+  let cols, drops;
+  function resize() {
+    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+    cols = Math.floor(canvas.width / 16);
+    drops = Array(cols).fill(1);
+  }
+  function draw() {
+    ctx.fillStyle = 'rgba(2,13,7,0.05)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#00ff88'; ctx.font = '13px monospace';
+    for (let i = 0; i < drops.length; i++) {
+      const ch = Math.random() < .5
+        ? String.fromCharCode(0x30A0 + Math.random() * 96)
+        : String(Math.floor(Math.random() * 2));
+      ctx.fillText(ch, i * 16, drops[i] * 16);
+      if (drops[i] * 16 > canvas.height && Math.random() > .975) drops[i] = 0;
+      drops[i]++;
+    }
+  }
+  resize();
+  window.addEventListener('resize', resize);
+  setInterval(draw, 50);
+})();
+
+/* ──────────────────────────────────────────
+   API Health Check
+────────────────────────────────────────── */
+async function checkApiHealth() {
+  const dot  = document.getElementById('api-dot');
+  const text = document.getElementById('api-status-text');
+  try {
+    const res = await fetch(API_BASE + '/health', { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      dot.className  = 'api-dot online';
+      text.textContent = 'AI Ready';
+    } else { throw new Error(); }
+  } catch {
+    dot.className  = 'api-dot offline';
+    text.textContent = 'Server offline';
+  }
+}
+checkApiHealth();
+setInterval(checkApiHealth, 30000);
+
+/* ──────────────────────────────────────────
+   File Upload
+────────────────────────────────────────── */
+const dropZone  = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const analyzeBtn= document.getElementById('analyze-btn');
+let selectedFile = null;
+
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+dropZone.addEventListener('dragover',  e  => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+
+function handleFile(file) {
+  selectedFile = file;
+  const isVideo = file.type.startsWith('video/');
+  document.getElementById('file-emoji').textContent = isVideo ? '🎬' : '🖼️';
+  document.getElementById('fname').textContent = file.name;
+  document.getElementById('fsize').textContent = formatSize(file.size);
+  document.getElementById('file-info').style.display = 'flex';
+  hideError();
+
+  // Preview
+  const previewArea = document.getElementById('preview-area');
+  const previewImg  = document.getElementById('preview-img');
+  const previewVid  = document.getElementById('preview-vid');
+  const objectUrl   = URL.createObjectURL(file);
+  previewArea.style.display = 'block';
+  if (isVideo) {
+    previewImg.style.display = 'none';
+    previewVid.style.display = 'block';
+    previewVid.src = objectUrl;
+  } else {
+    previewVid.style.display = 'none';
+    previewImg.style.display = 'block';
+    previewImg.src = objectUrl;
+  }
+  analyzeBtn.disabled = false;
+}
+
+function removeFile() {
+  selectedFile = null; fileInput.value = '';
+  document.getElementById('file-info').style.display  = 'none';
+  document.getElementById('preview-area').style.display = 'none';
+  document.getElementById('preview-img').src = '';
+  document.getElementById('preview-vid').src = '';
+  analyzeBtn.disabled = true;
+  hideError();
+}
+
+function formatSize(b) {
+  if (b < 1024)    return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
+}
+
+function showError(msg) {
+  const t = document.getElementById('error-toast');
+  document.getElementById('error-msg').textContent = msg;
+  t.style.display = 'flex';
+}
+function hideError() { document.getElementById('error-toast').style.display = 'none'; }
+
+/* ──────────────────────────────────────────
+   UI Step Helpers
+────────────────────────────────────────── */
+const STEP_LABELS = [
+  { label: 'Uploading file…',           status: 'Sending to server',             pct: 15 },
+  { label: 'Extracting frames…',        status: 'Sampling key frames from file', pct: 30 },
+  { label: 'Detecting faces…',          status: 'Face detection in progress',    pct: 50 },
+  { label: 'AI scoring (ViT model)…',   status: 'Running classification model',  pct: 70 },
+  { label: 'Averaging frame scores…',   status: 'Combining predictions',         pct: 85 },
+  { label: 'Generating verdict…',       status: 'Computing final result',        pct: 100 },
+];
+
+function resetSteps() {
+  for (let i = 0; i < 6; i++) { const b = document.getElementById('step-'+i); b.classList.remove('active','done'); }
+  for (let i = 0; i < 5; i++) { document.getElementById('conn-'+i).classList.remove('active'); }
+}
+
+function activateStep(s) {
+  if (s > 0) {
+    document.getElementById('step-'+(s-1)).classList.remove('active');
+    document.getElementById('step-'+(s-1)).classList.add('done');
+    document.getElementById('conn-'+(s-1)).classList.add('active');
+  }
+  document.getElementById('step-'+s).classList.add('active');
+  const info = STEP_LABELS[s];
+  document.getElementById('progress-label').textContent  = info.label;
+  document.getElementById('progress-pct').textContent    = info.pct + '%';
+  document.getElementById('progress-bar').style.width    = info.pct + '%';
+  document.getElementById('progress-status').textContent = info.status;
+}
+
+/* ──────────────────────────────────────────
+   Main Analysis — Real API Call
+────────────────────────────────────────── */
+async function startAnalysis() {
+  if (!selectedFile) return;
+
+  hideError();
+  analyzeBtn.disabled = true;
+  analyzeBtn.innerHTML = '<div class="spinner"></div> Analyzing…';
+
+  document.getElementById('pipeline-section').style.display = 'block';
+  document.getElementById('result-section').style.display   = 'none';
+  document.getElementById('pipeline-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  resetSteps();
+
+  // Animate steps 0-4 while waiting for API
+  let animStep = 0;
+  activateStep(0);
+  const stepInterval = setInterval(() => {
+    animStep++;
+    if (animStep < 5) activateStep(animStep);
+    else clearInterval(stepInterval);
+  }, 1200);
+
+  try {
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
+    const response = await fetch(API_BASE + '/analyze', {
+      method: 'POST',
+      body: formData,
+    });
+
+    clearInterval(stepInterval);
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: 'Server error' }));
+      throw new Error(err.error || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    activateStep(5);
+    setTimeout(() => displayResult(data), 800);
+
+  } catch (err) {
+    clearInterval(stepInterval);
+    analyzeBtn.innerHTML = '🔍 Analyze for Deepfake';
+    analyzeBtn.disabled  = false;
+    document.getElementById('pipeline-section').style.display = 'none';
+    showError('Analysis failed: ' + err.message + '. Make sure the server is running.');
+    console.error(err);
+  }
+}
+
+/* ──────────────────────────────────────────
+   Display Result from API
+────────────────────────────────────────── */
+function displayResult(data) {
+  const isFake    = data.verdict === 'FAKE';
+  const fakeScore = data.fake_score;
+  const realScore = data.real_score;
+  const frames    = data.frames_analyzed;
+  const scores    = data.frame_scores || [fakeScore];
+
+  const card    = document.getElementById('result-card');
+  const icon    = document.getElementById('result-icon');
+  const verdict = document.getElementById('result-verdict');
+  const sub     = document.getElementById('result-sub');
+
+  card.className      = 'result-card ' + (isFake ? 'fake' : 'real');
+  icon.textContent    = isFake ? '⚠️' : '✅';
+  verdict.textContent = data.verdict;
+  sub.textContent     = isFake
+    ? `High probability of AI manipulation detected. Fake score: ${fakeScore}%`
+    : `No significant deepfake artifacts detected. Real score: ${realScore}%`;
+
+  animateVal('conf-fake-val',   fakeScore, '%');
+  animateVal('conf-real-val',   realScore, '%');
+  document.getElementById('conf-frames-val').textContent = frames;
+
+  // Frame bar chart
+  const barContainer = document.getElementById('frame-bars');
+  barContainer.innerHTML = '';
+  document.getElementById('last-frame-label').textContent = `Frame ${scores.length}`;
+
+  scores.forEach((val, i) => {
+    const ratio  = val / 100;
+    // Red when fake, green when real
+    const hue    = `hsl(${Math.round((1 - ratio) * 120)}, 90%, 52%)`;
+    const bar    = document.createElement('div');
+    bar.className = 'frame-bar';
+    bar.style.height     = Math.max(4, Math.round(ratio * 82)) + 'px';
+    bar.style.background = hue;
+    bar.setAttribute('data-tip', `F${i+1}: ${val.toFixed(0)}%`);
+    barContainer.appendChild(bar);
+  });
+
+  document.getElementById('result-section').style.display = 'block';
+  document.getElementById('result-section').classList.add('fade-in');
+  setTimeout(() => document.getElementById('result-section').scrollIntoView({ behavior: 'smooth' }), 100);
+
+  analyzeBtn.innerHTML = '🔍 Analyze for Deepfake';
+  analyzeBtn.disabled  = false;
+}
+
+function animateVal(id, target, suffix) {
+  const el = document.getElementById(id);
+  let curr = 0;
+  const step = target / 40;
+  const iv = setInterval(() => {
+    curr += step;
+    if (curr >= target) { curr = target; clearInterval(iv); }
+    el.textContent = curr.toFixed(1) + suffix;
+  }, 25);
+}
+
+function resetAll() {
+  removeFile();
+  document.getElementById('pipeline-section').style.display = 'none';
+  document.getElementById('result-section').style.display   = 'none';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+</script>
+</body>
+</html>
