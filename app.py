@@ -188,7 +188,11 @@ def _analyze_image(file):
         img = Image.open(io.BytesIO(raw))
         fake, real, used_model = classify_image(img)
 
-        verdict    = "FAKE" if fake >= FAKE_THRESHOLD else "REAL"
+        # The real model uses a lowered threshold (model drift on modern AI
+        # images). The heuristic fallback uses its own natural 0.5 midpoint so
+        # that genuine photos are not wrongly flagged FAKE.
+        thresh = FAKE_THRESHOLD if used_model else 0.5
+        verdict    = "FAKE" if fake >= thresh else "REAL"
         confidence = round(max(fake, real) * 100, 1)
 
         resp = {
@@ -253,7 +257,9 @@ def _analyze_video(file):
             return jsonify({"error": "No frames analyzed."}), 500
 
         avg_fake = sum(frame_scores) / len(frame_scores)
-        verdict  = "FAKE" if avg_fake >= FAKE_THRESHOLD * 100 else "REAL"
+        # Heuristic fallback uses 0.5 midpoint; real model uses lowered threshold.
+        thresh_pct  = (FAKE_THRESHOLD if used_model_any else 0.5) * 100
+        verdict  = "FAKE" if avg_fake >= thresh_pct else "REAL"
 
         resp = {
             "verdict":         verdict,
