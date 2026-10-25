@@ -4,6 +4,12 @@ A full-stack AI-powered deepfake detection web app.
 
 **Team:** Idea Ignitors | **College:** AITM Kanpur
 
+## 🌐 Live Demo
+
+**👉 Try it now:** https://deepfake-detection-system-3woz.onrender.com
+
+> Hosted on Render free tier. First load may take ~30–60s (service wakes up from sleep). After that it's instant.
+
 ## 🚀 One-Click Live Deploy
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/iamaditi2607-svg/DEEPFAKE-DETECTION-SYSTEM)
