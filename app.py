@@ -139,10 +139,13 @@ def _heuristic_fallback(img: Image.Image) -> tuple[float, float, bool]:
             variances.append(float(np.var(patch)))
     avg_var = float(np.mean(variances)) if variances else 0.0
 
-    # High variance → more natural, low → possibly synthesized
-    threshold = 800.0
-    raw = math.tanh((threshold - avg_var) / threshold)        # >0 → fake tendency
-    fake = max(0.05, min(0.95, 0.5 + raw * 0.3))
+    # Natural photos carry sensor noise + fine texture → higher local variance.
+    # Many AI images are unnaturally smooth in flat regions.
+    # We bias the estimate toward REAL so genuine photos aren't wrongly
+    # accused; only clearly texture-less images lean toward FAKE.
+    variance_threshold = 300.0
+    raw = math.tanh((variance_threshold - avg_var) / variance_threshold)  # >0 → fake
+    fake = max(0.02, min(0.85, 0.3 + raw * 0.4))   # baseline 0.3 → leans REAL
     real = 1.0 - fake
     logger.info(f"Heuristic fallback → fake={fake:.3f} (avg_var={avg_var:.1f})")
     return fake, real, False
