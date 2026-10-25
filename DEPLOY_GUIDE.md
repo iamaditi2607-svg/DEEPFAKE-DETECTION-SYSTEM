@@ -22,7 +22,7 @@ git push -u origin main
 
 ---
 
-### Step 2: Railway pe Deploy Karo
+### Step 2: Railway pe Deploy Ka
 
 1. **railway.app** pe jaao → **"Start a New Project"** click karo
 2. **"Deploy from GitHub repo"** select karo

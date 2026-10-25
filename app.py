@@ -8,7 +8,7 @@ import os
 import io
 import cv2
 import base64
-import requests
+import reques
 import tempfile
 import logging
 import numpy as np
