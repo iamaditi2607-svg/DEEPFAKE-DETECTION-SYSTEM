@@ -4,8 +4,13 @@ A full-stack AI-powered deepfake detection web app.
 
 **Team:** Idea Ignitors | **College:** AITM Kanpur
 
-## 🚀 Live Demo
-Deployed on Railway — see deployment steps below.
+## 🚀 One-Click Live Deploy
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/iamaditi2607-svg/DEEPFAKE-DETECTION-SYSTEM)
+
+Click the button above → sign in with GitHub → Render reads `render.yaml` and builds automatically → you get a public URL like `https://deepshield-xxxx.onrender.com`.
+
+> (Optional) After deploy, go to the service's **Environment** tab and add `HF_API_KEY` with a free token from https://huggingface.co/settings/tokens for accurate AI detection. Without it the app still runs using a built-in fallback.
 
 ## 🧠 How It Works
 1. Upload image or video
