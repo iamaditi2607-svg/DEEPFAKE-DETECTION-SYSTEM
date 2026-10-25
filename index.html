@@ -476,6 +476,10 @@
       </div>
     </div>
 
+    <div id="result-warning" style="display:none;background:rgba(255,165,0,0.08);border:1px solid #ffaa33;border-radius:14px;padding:14px 18px;margin-top:16px;color:#ffcc66;font-size:0.88rem;line-height:1.5">
+      ⚠️ <span id="result-warning-text"></span>
+    </div>
+
     <div class="frames-analysis" id="frames-analysis">
       <div class="frames-title">📊 Per-Frame Fake Probability</div>
       <div class="frame-bars" id="frame-bars"></div>
@@ -776,6 +780,15 @@ function displayResult(data) {
     bar.setAttribute('data-tip', `F${i+1}: ${val.toFixed(0)}%`);
     barContainer.appendChild(bar);
   });
+
+  // Warning (e.g. HF_API_KEY not set → heuristic estimate shown)
+  const warnEl = document.getElementById('result-warning');
+  if (data.warning) {
+    document.getElementById('result-warning-text').textContent = data.warning;
+    warnEl.style.display = 'block';
+  } else {
+    warnEl.style.display = 'none';
+  }
 
   document.getElementById('result-section').style.display = 'block';
   document.getElementById('result-section').classList.add('fade-in');
