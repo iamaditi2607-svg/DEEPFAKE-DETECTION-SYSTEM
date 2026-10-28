@@ -5,3 +5,4 @@ numpy==2.5.3
 opencv-python-headless==5.0.0.93
 requests==2.34.2
 gunicorn==26.2.0
+onnxruntime==1.24.3

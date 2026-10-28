@@ -1,16 +1,20 @@
 """
 DeepShield – Deepfake Detection System
-Backend using HuggingFace Inference API (no local torch needed)
+Backend running a LOCAL ONNX deepfake-detection model (no API key needed).
 Team: Idea Ignitors | AITM Kanpur
+
+Model: onnx-community/Deep-Fake-Detector-v2-Model-ONNX (ViT, ~92% precision)
+  - Detects DEEPFAKES (fake / manipulated human faces) → FAKE
+  - Real photos → REAL
+  - AI-generated images (Stable Diffusion etc.) → REAL (they aren't deepfakes)
 """
 
 import os
 import io
-import cv2
-import base64
-import requests
+import threading
 import tempfile
 import logging
+import requests
 import numpy as np
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -28,121 +32,127 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB
 
 # ─────────────────────────────────────────────────────────
-#  HuggingFace Inference API Config
-#  Model: dima806/deepfake_vs_real_image_detection (ViT)
-#  Free tier: 30,000 calls/month – no credit card needed
+#  Local ONNX deepfake-detection model
+#  Downloaded once on first use, then cached in memory. No API key.
 # ─────────────────────────────────────────────────────────
-# Free token from https://huggingface.co/settings/tokens — needs the
-# "Inference Providers" permission. Without it the router returns 401 and
-# the app falls back to a (much weaker) statistical heuristic.
-HF_API_KEY   = os.environ.get("HF_API_KEY", "")
-HF_MODEL_URL = (
-    "https://router.huggingface.co/hf-inference/models/"
-    "dima806/deepfake_vs_real_image_detection"
+HF_API_KEY = os.environ.get("HF_API_KEY", "")  # kept only for /health compat
+
+ONNX_MODEL_URL = (
+    "https://huggingface.co/onnx-community/Deep-Fake-Detector-v2-Model-ONNX/"
+    "resolve/main/onnx/model_int8.onnx"
 )
-# Verdict threshold (0–1). The model is ~3 years old, so modern AI images
-# drift below the old default of 0.5; the author recommends lowering it.
-# Lower  = catch more fakes (risk: real images may be flagged fake);
-# Higher = safer for real images (risk: some fakes slip through).
-FAKE_THRESHOLD = float(os.environ.get("FAKE_THRESHOLD", "0.2"))
+ONNX_MODEL_PATH = os.path.join(tempfile.gettempdir(), "deepfake_detector_int8.onnx")
+
+# Verdict threshold (0-1): how high the model's "Deepfake" probability must be
+# to call an image FAKE. 0.5 = the model's natural decision boundary.
+# Lower it to catch more fakes; raise it to avoid flagging real images.
+FAKE_THRESHOLD = float(os.environ.get("FAKE_THRESHOLD", "0.5"))
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif", ".tiff"}
 VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv"}
 
 
 # ─────────────────────────────────────────────────────────
-#  Core: Call HuggingFace API for one PIL image
+#  ONNX model loader (lazy + thread-safe + cached)
+# ─────────────────────────────────────────────────────────
+_ONNX_SESSION = None        # None = not loaded, "FAILED" = gave up, else session
+_ONNX_LOCK = threading.Lock()
+
+
+def _get_onnx_session():
+    """Download (once) and load the ONNX model. Returns session or None."""
+    global _ONNX_SESSION
+    if _ONNX_SESSION is not None:
+        return None if _ONNX_SESSION == "FAILED" else _ONNX_SESSION
+
+    with _ONNX_LOCK:
+        if _ONNX_SESSION is not None:  # another thread loaded it already
+            return None if _ONNX_SESSION == "FAILED" else _ONNX_SESSION
+        try:
+            import onnxruntime as ort
+
+            if (not os.path.exists(ONNX_MODEL_PATH)
+                    or os.path.getsize(ONNX_MODEL_PATH) < 10_000_000):
+                logger.info("Downloading ONNX deepfake model (~86MB, one-time)…")
+                with requests.get(ONNX_MODEL_URL, stream=True, timeout=180) as r:
+                    r.raise_for_status()
+                    with open(ONNX_MODEL_PATH, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1 << 20):
+                            if chunk:
+                                f.write(chunk)
+                logger.info("Model download complete.")
+
+            so = ort.SessionOptions()
+            so.intra_op_num_threads = 1
+            so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            _ONNX_SESSION = ort.InferenceSession(
+                ONNX_MODEL_PATH, sess_options=so, providers=["CPUExecutionProvider"]
+            )
+            logger.info("ONNX deepfake model loaded.")
+            return _ONNX_SESSION
+        except Exception as e:
+            logger.error(f"ONNX model load failed: {e} — using heuristic fallback")
+            _ONNX_SESSION = "FAILED"
+            return None
+
+
+def _classify_onnx(img: Image.Image) -> tuple[float, float]:
+    """Run the ONNX deepfake model on one PIL image. Returns (fake, real)."""
+    # Preprocess: RGB → resize 224x224 (bilinear) → rescale 1/255 → normalize to [-1,1]
+    img = img.convert("RGB").resize((224, 224), Image.BILINEAR)
+    arr = np.asarray(img, dtype=np.float32) / 255.0
+    arr = (arr - 0.5) / 0.5                       # mean=std=0.5 → range [-1, 1]
+    arr = np.transpose(arr, (2, 0, 1))[None, ...]  # NCHW
+
+    session = _get_onnx_session()
+    if session is None:
+        raise RuntimeError("ONNX session unavailable")
+
+    inp_name = session.get_inputs()[0].name
+    logits = session.run(None, {inp_name: arr})[0][0]   # [real_logit, fake_logit]
+    e = np.exp(logits - logits.max())
+    probs = e / e.sum()
+    # id2label: 0 = Realism (REAL), 1 = Deepfake (FAKE)
+    return float(probs[1]), float(probs[0])
+
+
+# ─────────────────────────────────────────────────────────
+#  Core: classify one image
 # ─────────────────────────────────────────────────────────
 def classify_image(img: Image.Image) -> tuple[float, float, bool]:
     """
-    Send a PIL image to the HuggingFace router Inference API.
-    Returns (fake_score, real_score, used_model) where scores are 0.0–1.0.
-    used_model is True when the real AI model answered; False when we fell
-    back to the heuristic (e.g. missing/invalid HF_API_KEY).
+    Classify one image as REAL or (deep)FAKE using the local ONNX model.
+    Returns (fake_score, real_score, used_model). used_model is True when the
+    real model answered; False when we fell back to the heuristic.
     """
     try:
-        # Resize to reduce payload size (keeps the free tier fast)
-        img = img.convert("RGB")
-        img.thumbnail((512, 512), Image.LANCZOS)
-
-        # Encode to JPEG bytes
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=90)
-        img_bytes = buf.getvalue()
-
-        headers = {"Content-Type": "application/octet-stream"}
-        if HF_API_KEY:
-            headers["Authorization"] = f"Bearer {HF_API_KEY}"
-
-        resp = requests.post(
-            HF_MODEL_URL,
-            headers=headers,
-            data=img_bytes,
-            timeout=30,
-        )
-
-        # Serverless router returns 503 while the model cold-starts; retry once.
-        if resp.status_code in (503, 429):
-            import time
-            logger.warning(f"HF busy ({resp.status_code}), retrying in 12s…")
-            time.sleep(12)
-            resp = requests.post(HF_MODEL_URL, headers=headers, data=img_bytes, timeout=45)
-
-        if resp.status_code in (401, 403):
-            logger.error("HF API rejected auth — HF_API_KEY missing or invalid. Using heuristic fallback.")
-            return _heuristic_fallback(img)
-
-        resp.raise_for_status()
-        results = resp.json()
-
-        fake_score, real_score = 0.0, 0.0
-        for r in results:
-            lbl = r.get("label", "").lower()
-            score = float(r.get("score", 0))
-            if "fake" in lbl:
-                fake_score = score
-            elif "real" in lbl:
-                real_score = score
-
-        # Normalize (model returns softmax scores that already sum to ~1)
-        total = fake_score + real_score
-        if total > 0:
-            fake_score /= total
-            real_score /= total
-        else:
-            fake_score = real_score = 0.5
-
-        logger.info(f"HF model → fake={fake_score:.3f} real={real_score:.3f}")
-        return fake_score, real_score, True
-
+        fake, real = _classify_onnx(img)
+        logger.info(f"ONNX model → fake={fake:.3f} real={real:.3f}")
+        return fake, real, True
     except Exception as e:
-        logger.error(f"HF API error: {e} — using heuristic fallback")
+        logger.warning(f"ONNX inference unavailable ({e}); using heuristic fallback")
         return _heuristic_fallback(img)
 
 
 def _heuristic_fallback(img: Image.Image) -> tuple[float, float, bool]:
     """
-    Last-resort statistical estimate when the HF model is unreachable
-    (e.g. HF_API_KEY not set). NOT a real deepfake detector — it only looks at
-    local pixel-variance smoothness, so treat its output as a rough guess.
+    Last-resort statistical estimate when the ONNX model can't load/run.
+    NOT a real deepfake detector — it only looks at local pixel-variance
+    smoothness, so treat its output as a rough guess (and it leans REAL so
+    genuine photos are not wrongly accused).
     """
     import math
     arr = np.array(img.convert("RGB"), dtype=np.float32)
 
-    # Measure local variance in small blocks (AI images are often smoother)
     h, w = arr.shape[:2]
     block = 16
     variances = []
     for y in range(0, h - block, block):
         for x in range(0, w - block, block):
-            patch = arr[y:y+block, x:x+block]
+            patch = arr[y:y + block, x:x + block]
             variances.append(float(np.var(patch)))
     avg_var = float(np.mean(variances)) if variances else 0.0
 
-    # Natural photos carry sensor noise + fine texture → higher local variance.
-    # Many AI images are unnaturally smooth in flat regions.
-    # We bias the estimate toward REAL so genuine photos aren't wrongly
-    # accused; only clearly texture-less images lean toward FAKE.
     variance_threshold = 300.0
     raw = math.tanh((variance_threshold - avg_var) / variance_threshold)  # >0 → fake
     fake = max(0.02, min(0.85, 0.3 + raw * 0.4))   # baseline 0.3 → leans REAL
@@ -162,7 +172,8 @@ def index():
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "hf_key_set": bool(HF_API_KEY)})
+    return jsonify({"status": "ok", "model": "onnx_deepfake",
+                    "hf_key_set": bool(HF_API_KEY)})
 
 
 @app.route("/analyze", methods=["POST"])
@@ -191,11 +202,9 @@ def _analyze_image(file):
         img = Image.open(io.BytesIO(raw))
         fake, real, used_model = classify_image(img)
 
-        # The real model uses a lowered threshold (model drift on modern AI
-        # images). The heuristic fallback uses its own natural 0.5 midpoint so
-        # that genuine photos are not wrongly flagged FAKE.
+        # Model uses its natural 0.5 boundary; heuristic also uses 0.5.
         thresh = FAKE_THRESHOLD if used_model else 0.5
-        verdict    = "FAKE" if fake >= thresh else "REAL"
+        verdict = "FAKE" if fake >= thresh else "REAL"
         confidence = round(max(fake, real) * 100, 1)
 
         resp = {
@@ -209,9 +218,9 @@ def _analyze_image(file):
             "method":          "ai_model" if used_model else "heuristic",
         }
         if not used_model:
-            resp["warning"] = ("AI model unreachable (HF_API_KEY not set/invalid). "
-                               "This is only a rough estimate — set HF_API_KEY on "
-                               "the host for accurate detection.")
+            resp["warning"] = ("The AI model could not be loaded on the server, "
+                               "so this is only a rough estimate — not a reliable "
+                               "deepfake check.")
         return jsonify(resp)
     except Exception as e:
         logger.error(f"Image error: {e}")
@@ -221,6 +230,7 @@ def _analyze_image(file):
 # ── Video handler ─────────────────────────────────────
 
 def _analyze_video(file):
+    import cv2  # lazy import — keeps image requests light on memory
     tmp_path = None
     try:
         suffix = os.path.splitext(file.filename)[1] or ".mp4"
@@ -236,10 +246,10 @@ def _analyze_video(file):
         if total <= 0:
             return jsonify({"error": "Video has no frames."}), 400
 
-        num_samples   = min(20, total)
+        num_samples = min(20, total)
         frame_indices = np.linspace(0, total - 1, num_samples, dtype=int)
-        frame_scores   = []
-        used_model_any  = False
+        frame_scores = []
+        used_model_any = False
 
         for idx in frame_indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
@@ -260,9 +270,8 @@ def _analyze_video(file):
             return jsonify({"error": "No frames analyzed."}), 500
 
         avg_fake = sum(frame_scores) / len(frame_scores)
-        # Heuristic fallback uses 0.5 midpoint; real model uses lowered threshold.
-        thresh_pct  = (FAKE_THRESHOLD if used_model_any else 0.5) * 100
-        verdict  = "FAKE" if avg_fake >= thresh_pct else "REAL"
+        thresh_pct = (FAKE_THRESHOLD if used_model_any else 0.5) * 100
+        verdict = "FAKE" if avg_fake >= thresh_pct else "REAL"
 
         resp = {
             "verdict":         verdict,
@@ -275,9 +284,9 @@ def _analyze_video(file):
             "method":          "ai_model" if used_model_any else "heuristic",
         }
         if not used_model_any:
-            resp["warning"] = ("AI model unreachable (HF_API_KEY not set/invalid). "
-                               "This is only a rough estimate — set HF_API_KEY on "
-                               "the host for accurate detection.")
+            resp["warning"] = ("The AI model could not be loaded on the server, "
+                               "so this is only a rough estimate — not a reliable "
+                               "deepfake check.")
         return jsonify(resp)
     except Exception as e:
         logger.error(f"Video error: {e}")
@@ -296,7 +305,6 @@ def _analyze_video(file):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     logger.info(f"🚀 DeepShield starting on http://0.0.0.0:{port}")
-    if not HF_API_KEY:
-        logger.warning("⚠️  HF_API_KEY not set — AI model will be unreachable; "
-                       "set a free HF token (Inference Providers permission) for accurate detection.")
+    logger.info("Deepfake detection runs on a local ONNX model (no API key needed). "
+                "First request may take ~30s while the model downloads/loads.")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

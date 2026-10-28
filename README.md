@@ -16,7 +16,7 @@ A full-stack AI-powered deepfake detection web app.
 
 Click the button above → sign in with GitHub → Render reads `render.yaml` and builds automatically → you get a public URL like `https://deepshield-xxxx.onrender.com`.
 
-> (Optional) After deploy, go to the service's **Environment** tab and add `HF_API_KEY` with a free token from https://huggingface.co/settings/tokens for accurate AI detection. Without it the app still runs using a built-in fallback.
+> No API key needed — the deepfake detector runs as a local ONNX model on the server. (Optional tuning: add `FAKE_THRESHOLD` env var, 0.0–1.0, default 0.5 — lower catches more fakes, higher avoids flagging real images.)
 
 ## 🧠 How It Works
 1. Upload image or video
